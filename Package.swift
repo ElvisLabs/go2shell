@@ -19,6 +19,11 @@ let package = Package(
             path: "Sources",
             resources: [
                 .copy("../Resources")
+            ],
+            // Settings window reports extension status and deep-links to the
+            // Finder Extensions pane via FIFinderSyncController.
+            linkerSettings: [
+                .linkedFramework("FinderSync")
             ]
         )
     ]

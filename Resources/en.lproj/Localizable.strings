@@ -1,17 +1,11 @@
-/* Main view */
-"app.subtitle" = "Open terminal from current Finder directory";
+/* Preferred terminal */
 "settings.preferred_terminal" = "Preferred Terminal";
-"settings.not_installed" = "(Not Installed)";
-"settings.fallback_note" = "If the selected terminal is unavailable, the system default terminal will be used automatically.";
+"settings.not_installed" = "Not installed";
+"settings.fallback_note" = "Falls back to Terminal.app when the selected terminal is unavailable.";
 
-/* Instructions */
-"instructions.title" = "How to Use";
-"instructions.step1.title" = "Drag to Finder Toolbar";
-"instructions.step1.detail" = "Hold ⌘ key and drag the go2shell icon to any Finder window's toolbar";
-"instructions.step2.title" = "Click to Open Terminal";
-"instructions.step2.detail" = "Click the go2shell icon in any Finder window's toolbar to open a terminal in the current directory";
-"instructions.settings.title" = "Change Settings";
-"instructions.settings.detail" = "Double-click the app icon in the Applications folder to open this settings window";
-
-/* Tip */
-"tip.open_settings" = "Tip: Double-click the app icon in the Applications folder to open this settings window";
+/* Finder extension */
+"settings.finder_extension" = "Finder Extension";
+"settings.extension_enabled" = "Enabled";
+"settings.extension_disabled" = "Not enabled";
+"settings.manage_extensions" = "Manage in Login Items & Extensions…";
+"settings.toolbar_hint" = "Add the buttons from any Finder window’s Customize Toolbar sheet.";
