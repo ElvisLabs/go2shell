@@ -7,67 +7,145 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 The build is driven by the **Makefile**, not SPM alone — `swift build` only produces the bare executable; the `.app` bundle, the two FinderSync extensions, and code signing are all assembled by the Makefile.
 
 ```bash
-make build           # Compile main app + both extensions, assemble + sign .app at .build/go2shell.app
-make install         # Build, copy to /Applications, run lsregister/pluginkit, restart Finder
+make build           # SPM release build + both extensions + bundle assembly + signing → .build/go2shell.app
+make install         # Build, copy to /Applications, lsregister + pluginkit register/enable, restart Finder
 make uninstall       # Remove from /Applications (does not clear App Group prefs)
-make run             # Launch the built .app's settings window directly
+make run             # Run the built binary directly (shows settings UI — see routing below)
 make clean           # swift package clean + rm -rf .build .swiftpm
-make release         # Build + zip to build/go2shell.zip + print sha256 (used by Homebrew tap)
-make icon            # Regenerate Resources/AppIcon.icns from Resources/icon.png
+make release         # Build + zip to build/go2shell.zip + print sha256 (local equivalent of CI packaging)
+make icon            # Resources/icon.png → Resources/AppIcon.icns (sips + iconutil)
 make reset           # killall Finder
+make debug           # Print swift version + whether /Applications/go2shell.app exists
 ```
 
-After `make install`, `pluginkit -e use -i com.solarhell.go2shell.{TerminalSync,CopySync}` runs automatically — but if extensions still don't appear, check `pluginkit -m -v | grep go2shell` and ensure they're not stuck in `disabled (unknown)` state.
+`make install` hard-fails if `pluginkit -m -v` doesn't list both extension IDs afterwards. If they register but don't appear in Finder's "Customize Toolbar", check for a stale `disabled (unknown)` state in `pluginkit -m -v | grep go2shell`.
 
-There is no test target; `swift test` and `make test` are no-ops.
+### Iterating on an extension without losing Finder windows
+
+`make install` ends in `killall Finder`, which discards every open Finder window. That is unnecessary: the extensions are separate processes that Finder respawns on demand, so killing only those picks up a new binary.
+
+```bash
+make build
+rm -rf /Applications/go2shell.app && cp -R .build/go2shell.app /Applications/
+LS=/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister
+$LS -f /Applications/go2shell.app
+pluginkit -a /Applications/go2shell.app/Contents/PlugIns/go2shellTerminal.appex
+pluginkit -a /Applications/go2shell.app/Contents/PlugIns/go2shellCopy.appex
+pluginkit -e use -i com.solarhell.go2shell.TerminalSync
+pluginkit -e use -i com.solarhell.go2shell.CopySync
+killall go2shellTerminal go2shellCopy      # NOT killall Finder
+```
+
+Verified: the extension processes restart and log from the new binary on the next toolbar click while Finder keeps all its windows.
+
+Two Makefile targets are misleading:
+
+- `make run-settings` passes `--settings`, which **no code reads** — `main.swift` only checks `--show-ui`. It behaves identically to `make run`.
+- `make test` runs `swift test`, but `Package.swift` declares no test target. There are no tests in this repo.
+
+Icon regeneration is two steps, and only the second is in the Makefile: `swift generate_icon.swift` draws the HIG squircle into `Resources/icon.png`, then `make icon` resamples it into the `.icns`.
 
 ## Architecture
 
 ### Three-binary layout
 
-This is **one app bundle that contains three separately-signed executables**:
+This is **one app bundle containing three separately-signed executables**:
 
-1. **Main app** (`Sources/`, built by SPM) — has two roles depending on launch context, and the routing happens in `Sources/main.swift`:
-   - If Finder is the frontmost app and `--show-ui` is not passed: behaves as a one-shot launcher. Calls `FinderManager` (ScriptingBridge → Finder) to get the front window's path, then `TerminalManager.openTerminal(atPath:)`, then exits.
-   - Otherwise: boots SwiftUI (`Go2ShellApp` in `Views.swift`) and shows the settings window. The `LSUIElement` flag in `Resources/Info.plist` keeps it dockless until SwiftUI elevates the activation policy in `SettingsAppDelegate`.
+1. **Main app** (`Sources/`, built by SPM).
 2. **TerminalSync extension** (`FinderSyncExtension/TerminalSync/`) — Finder toolbar item "Open in Terminal".
 3. **CopySync extension** (`FinderSyncExtension/CopySync/`) — Finder toolbar item "Copy Path".
 
-The extensions are **not** SPM targets. The Makefile compiles each one with a direct `swiftc` invocation that links `-Xlinker -e -Xlinker _NSExtensionMain` (the FinderSync entry point) and embeds the `.appex` under `Contents/PlugIns/`. If you add Swift files to an extension, add them to the extension's `swiftc` line in the Makefile — SPM will not pick them up.
+The extensions are **not** SPM targets. The Makefile compiles each with a direct `swiftc` invocation linking `-Xlinker -e -Xlinker _NSExtensionMain` (the FinderSync entry point; each extension's `main.swift` is deliberately empty) and embeds the `.appex` under `Contents/PlugIns/`. If you add a Swift file to an extension, add it to that extension's `swiftc` line in the Makefile — SPM will not pick it up.
+
+### Main-app launch routing (`Sources/main.swift`)
+
+Three conditions decide between one-shot launcher and settings UI:
+
+- Shows the **UI** if `--show-ui` is passed, **or** Finder is not frontmost (checked via *both* `frontmostApplication` and `menuBarOwningApplication`), **or** the resolved path is empty / starts with `/Applications`.
+- The `/Applications` guard is what makes double-clicking the installed app open settings instead of a terminal at `/Applications`.
+- Otherwise it resolves the path via `FinderManager` (ScriptingBridge → Finder), falls back to Desktop, calls `TerminalManager.openTerminal(atPath:)`, and exits.
+
+`LSUIElement` in `Resources/Info.plist` keeps the app dockless; `SettingsAppDelegate` raises the activation policy to `.regular` only when SwiftUI actually boots.
+
+### Two independent terminal-launch implementations
+
+**This is the main thing to know before touching terminal behavior.** The same feature exists twice with *different* AppleScript strategies, and neither imports the other:
+
+| | `Sources/TerminalManager.swift` (main app) | `FinderSyncExtension/TerminalSync/TerminalLauncher.swift` (toolbar) |
+|---|---|---|
+| Enum | `TerminalManager.Terminal` | `SupportedTerminal` |
+| Terminal.app | ScriptingBridge `open([url])` | `tell application id … do script "cd …"` |
+| iTerm / Warp / WezTerm | `do shell script "open -a X <path>"` | `tell application id` + session write / `warp://action/new_tab?path=` / bare `activate` |
+| Path escaping | `appleScriptString()` + AppleScript `quoted form of` | `singleQuoted()` / `urlEncode()` / `appleScriptString()` |
+
+A fix in one does **not** apply to the other. Known live divergence: the extension's WezTerm case only activates the app without any `cd`, while the main app path passes the directory to `open -a`.
+
+Both sides now build shell commands as `"… " & quoted form of <applescript string>` and let AppleScript do the quoting. The old hand-rolled `String.specialCharEscaped(_:)` is gone and must not come back: it escaped `\` *last*, so backslashes it had just inserted got re-escaped and a path with a space came out with six of them, which the shell then collapsed into a literal `\ ` — every iTerm/Warp/WezTerm launch into a directory with a space silently opened the wrong place.
+
+Ghostty is handled identically on both sides and must stay that way: one unconditional `tell application id` that sets `initial working directory` on a `new surface configuration`, with a `count of windows` check so a fresh launch gets a tab rather than a second window. Do **not** reintroduce an `NSRunningApplication` "is it running?" branch — inside the sandboxed extension that check can report Ghostty as not-running while it is, and the `open -na … --working-directory=` fallback it used to guard forces a *second* instance that restores its saved session and drops the working directory entirely (verified: a cold `open -na` with a unique probe path produced no shell at that path). Read the comment block in `TerminalLauncher.swift` before changing this.
+
+### Sandbox asymmetry
+
+The main app is **not sandboxed** (`app-sandbox = false` in `Resources/go2shell.entitlements`); both extensions **are** (Finder requires it). Consequences that show up in extension code:
+
+- `NSHomeDirectory()` returns the sandbox container, so `TerminalSync` reads the real home via `getpwuid` (`realUserHome()`).
+- Every app the extension talks to via AppleScript must be listed in `com.apple.security.temporary-exception.apple-events`. `TerminalSync/FinderSync.entitlements` lists Finder **plus all five terminal bundle IDs**; `CopySync/FinderSync.entitlements` lists Finder only (it just writes the pasteboard). The main app needs no such list.
 
 ### Settings flow (App Group)
 
-The preferred-terminal setting is shared between the main app and both extensions via the **`group.com.solarhell.go2shell` App Group** (`Sources/SharedDefaults.swift`). The extensions read it with their own `UserDefaults(suiteName:)` calls. If you add a new shared preference key, all three binaries need to agree on the suite name.
+`PreferredTerminal` is shared between all three binaries via the **`group.com.solarhell.go2shell`** App Group. The main app goes through `Sources/SharedDefaults.swift` (which falls back to `.standard` if the group is unavailable, e.g. an unsigned dev run) and binds it with `@AppStorage(store:)` in `Views.swift`; each extension constructs its own `UserDefaults(suiteName:)`. A new shared key needs all three binaries to agree on the suite name.
+
+On first run only (key unset), `detectDefaultTerminal()` in `main.swift` writes `iTerm` if `/Applications/iTerm.app` exists, else `Terminal`.
+
+App Group defaults live in `~/Library/Group Containers/group.com.solarhell.go2shell/Library/Preferences/`, **not** `~/Library/Preferences/`. `defaults read group.com.solarhell.go2shell PreferredTerminal` reports "does not exist" even when the value is set — `plutil -p` the plist in the Group Container instead.
+
+### Settings window
+
+`Views.swift` is a native `Form` with `.formStyle(.grouped)`, constrained in width and `.fixedSize` vertically so the window sizes to its content instead of scrolling inside a fixed frame. All five terminals render in one fixed-order list; uninstalled ones grey out in place rather than moving to a separate group.
+
+The extension-status row goes through `Sources/ExtensionStatus.swift`, which shells out to `pluginkit`. `FIFinderSyncController.isExtensionEnabled` looks like the right API but only reports for the calling *extension's* own process — in the container app it is always false, which silently renders "not enabled" for a perfectly healthy install. The main app is unsandboxed, so spawning `pluginkit` is allowed. `FIFinderSyncController.showExtensionManagementInterface()` *does* work from the container app; it opens System Settings › Login Items & Extensions — the parent pane, not the Finder Extensions sheet, so don't label the button as if it jumps straight there.
+
+Both calls need `FinderSync.framework`, linked from the main app via `linkerSettings` in `Package.swift`.
 
 ### Network-volume fallback
 
-`FIFinderSyncController.targetedURL()` / `selectedItemURLs()` return `nil` on SMB/AFP mounts and some Finder views. Both extension controllers handle this by falling back to **AppleScript against `com.apple.finder`** (`frontFinderPathViaAppleScript`). This requires the `com.apple.security.temporary-exception.apple-events` entitlement scoped to `com.apple.finder` in each extension's `FinderSync.entitlements`. Don't broaden that scope — and don't add `--deep` to the main-app codesign, because it would overwrite the extensions' entitlements with the main app's.
-
-### Finder/Terminal ScriptingBridge headers
-
-`Sources/Finder.swift`, `Sources/Finder.h`, `Sources/Terminal.swift`, `Sources/Terminal.h` are **auto-generated from the `Finder.app` and `Terminal.app` `sdef` definitions**. They're checked in so SPM can compile without running `sdef` at build time. Treat them as opaque — don't hand-edit; regenerate from the system `.sdef` if Apple ships changes.
+`FIFinderSyncController.targetedURL()` / `selectedItemURLs()` return `nil` on SMB/AFP mounts and some Finder views. Both extension controllers fall back to **AppleScript against `com.apple.finder`** (`frontFinderPathViaAppleScript`, duplicated verbatim in both controllers). This is what the `com.apple.finder` entry in each extension's temporary-exception list is for — don't remove it, and don't add `--deep` to the main-app codesign, which would overwrite the extensions' entitlements with the main app's.
 
 ### `menu(for:)` must not block
 
-Finder shows a "waiting" indicator if a FinderSync extension blocks in `menu(for:)`. Both controllers capture URLs synchronously (the FinderSync API is main-thread-only) and then dispatch the actual work — AppleScript fallback, terminal launch, pasteboard write — to a background queue. Keep this pattern when adding new menu actions.
+Finder shows a "waiting" indicator if a FinderSync extension blocks in `menu(for:)`. Both controllers capture URLs synchronously (the FinderSync API is main-thread-only), return `nil` immediately, and dispatch the real work — AppleScript fallback, terminal launch, pasteboard write — to `DispatchQueue.global`. Keep this pattern for any new menu action. Both extensions log to `os.Logger` under subsystem `com.solarhell.go2shell.{TerminalSync,CopySync}`; `log show --predicate 'subsystem BEGINSWITH "com.solarhell.go2shell"'` is the only practical way to debug them.
+
+### Finder/Terminal ScriptingBridge headers
+
+`Sources/Finder.{swift,h}` and `Sources/Terminal.{swift,h}` are **auto-generated from the `Finder.app` / `Terminal.app` sdef definitions** and checked in so SPM compiles without running `sdef`. Treat them as opaque — regenerate rather than hand-edit.
 
 ### Adding a new terminal
 
-Three places must agree:
-1. `Sources/TerminalManager.swift` — `Terminal` enum + a `private static func open<Name>(atPath:)` (used by the main-app one-shot path).
-2. `FinderSyncExtension/TerminalSync/TerminalLauncher.swift` — `SupportedTerminal` enum + a `case` in the AppleScript switch (used by the toolbar extension).
-3. The `appPath` and `bundleID` (extension only) must match the actual installed location and bundle identifier.
+**Four** places must agree:
 
-The two enums are intentionally not shared because the extension does not import the main-app target.
+1. `Sources/TerminalManager.swift` — `Terminal` enum case + `private static func open<Name>(atPath:)`.
+2. `FinderSyncExtension/TerminalSync/TerminalLauncher.swift` — `SupportedTerminal` case + a `case` in the AppleScript switch.
+3. `FinderSyncExtension/TerminalSync/FinderSync.entitlements` — add the bundle ID to `com.apple.security.temporary-exception.apple-events`, or the sandboxed extension's AppleScript is silently denied.
+4. `appPath` (both enums) and `bundleID` must match the real install location and bundle identifier.
+
+The enums are intentionally not shared — the extension doesn't import the main-app target.
 
 ## Code signing
 
-Everything is **ad-hoc signed** (`codesign --sign -`). The Makefile signs each `.appex` individually with its own entitlements file *before* assembling the bundle, then signs the main app *without* `--deep` so the extension signatures and entitlements are preserved. If you ever need to re-sign manually, follow the same order: extensions first (with their entitlements), then the outer app (with `Resources/go2shell.entitlements`).
+Everything is **ad-hoc signed** (`codesign --sign -`). Order matters: each `.appex` is signed with its own entitlements file at build time *and again* after being copied into the bundle, then the main app is signed **without** `--deep` so the extension signatures and entitlements survive. Follow the same order for any manual re-sign: extensions first (with their entitlements), then the outer app with `Resources/go2shell.entitlements`.
+
+Releases are not notarized — the release notes tell users to run `xattr -d com.apple.quarantine`.
 
 ## Localization
 
-Strings live in `Sources/L10n.swift` (a small enum-style wrapper) backed by `Resources/en.lproj/` and `Resources/zh-Hans.lproj/`. The default development region is `zh_CN` (per `Info.plist`); SPM's `defaultLocalization` is `en`.
+`Sources/L10n.swift` wraps `NSLocalizedString` against **`Bundle.main`**, not `Bundle.module`. That only works because `create-bundle` in the Makefile copies `Resources/*.lproj` directly into `Contents/Resources/` (separately from the SPM `.bundle`). Both copy steps must stay. The extensions are **not** localized — their `toolbarItemName` / tooltips are hardcoded English.
+
+`Info.plist` sets `CFBundleDevelopmentRegion` to `zh_CN` while `Package.swift` sets `defaultLocalization: "en"`.
 
 ## Distribution
 
-`make release` is what the GitHub Actions release workflow runs to produce `go2shell.zip` for the Homebrew tap at `dingtang2008/tap`. The `.github/workflows/update-homebrew.yml` workflow updates the cask formula on release.
+`release.yml` (manual `workflow_dispatch`; auto-increments the patch version if none given) creates the tag and GitHub release, then calls `build.yml`, then `update-homebrew.yml`.
+
+`build.yml` runs `make build` and zips/checksums inline — it does **not** call `make release`. `make release` is the local equivalent; keep the two in sync if you change packaging.
+
+Note the fork inconsistency: `update-homebrew.yml` still pushes the cask to **`solarhell/homebrew-tap`** with a download URL pointing at `solarhell/go2shell` releases, while this fork's origin is `dingtang2008/go2shell` and the READMEs tell users to install from `dingtang2008/tap`. Automated releases from this fork will not update the tap the README advertises.
