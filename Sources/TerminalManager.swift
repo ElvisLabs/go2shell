@@ -72,9 +72,8 @@ class TerminalManager {
 
     /// iTerm2 — 移植自 OpenInTerminal 的 shell 命令方式
     private static func openITerm(atPath path: String) {
-        let escapedPath = path.specialCharEscaped(2)
         let source = """
-        do shell script "open -a iTerm \(escapedPath)"
+        do shell script "open -a iTerm " & quoted form of \(appleScriptString(path))
         """
         var error: NSDictionary?
         NSAppleScript(source: source)?.executeAndReturnError(&error)
@@ -82,41 +81,31 @@ class TerminalManager {
 
     /// Warp
     private static func openWarp(atPath path: String) {
-        let escapedPath = path.specialCharEscaped(2)
         let source = """
-        do shell script "open -a Warp \(escapedPath)"
+        do shell script "open -a Warp " & quoted form of \(appleScriptString(path))
         """
         var error: NSDictionary?
         NSAppleScript(source: source)?.executeAndReturnError(&error)
     }
 
-    /// Ghostty — uses Ghostty 1.x's AppleScript dictionary to add a tab to
-    /// the running instance (so we don't spawn a new process every click).
-    /// Cold start falls back to `open -na --args --working-directory=` so the
-    /// first window lands at the right path. See the FinderSync extension's
-    /// TerminalLauncher.swift for the full reasoning.
+    /// Ghostty — uses Ghostty 1.x's AppleScript dictionary to add a tab carrying
+    /// the initial working directory. `tell application id` launches Ghostty when
+    /// needed, so there is no cold-start branch: `open -na` would force a second
+    /// instance that restores its saved session and drops --working-directory.
+    /// See the FinderSync extension's TerminalLauncher.swift for the full reasoning.
     private static func openGhostty(atPath path: String) {
-        let isRunning = !NSRunningApplication.runningApplications(withBundleIdentifier: "com.mitchellh.ghostty").isEmpty
-        let source: String
-        if isRunning {
-            source = """
-            tell application id "com.mitchellh.ghostty"
-                activate
-                set cfg to new surface configuration
-                set initial working directory of cfg to \(appleScriptString(path))
-                if (count of windows) > 0 then
-                    new tab in front window with configuration cfg
-                else
-                    new window with configuration cfg
-                end if
-            end tell
-            """
-        } else {
-            let escapedPath = path.specialCharEscaped(2)
-            source = """
-            do shell script "open -na Ghostty.app --args --working-directory=\(escapedPath)"
-            """
-        }
+        let source = """
+        tell application id "com.mitchellh.ghostty"
+            activate
+            set cfg to new surface configuration
+            set initial working directory of cfg to \(appleScriptString(path))
+            if (count of windows) > 0 then
+                new tab in front window with configuration cfg
+            else
+                new window with configuration cfg
+            end if
+        end tell
+        """
         var error: NSDictionary?
         NSAppleScript(source: source)?.executeAndReturnError(&error)
     }
@@ -130,24 +119,10 @@ class TerminalManager {
 
     /// WezTerm
     private static func openWezTerm(atPath path: String) {
-        let escapedPath = path.specialCharEscaped(2)
         let source = """
-        do shell script "open -a WezTerm \(escapedPath)"
+        do shell script "open -a WezTerm " & quoted form of \(appleScriptString(path))
         """
         var error: NSDictionary?
         NSAppleScript(source: source)?.executeAndReturnError(&error)
-    }
-}
-
-// 移植自 OpenInTerminal - String+Extension.swift
-extension String {
-    func specialCharEscaped(_ escapeCount: Int = 1) -> String {
-        var result = self
-        let specialChars = [" ", "(", ")", "&", "|", ";", "\"", "'", "<", ">", "`", "!", "{", "}", "[", "]", "$", "#", "^", "~", "?", "*", "\\"]
-        let escape = String(repeating: "\\", count: escapeCount)
-        for char in specialChars {
-            result = result.replacingOccurrences(of: char, with: escape + char)
-        }
-        return result
     }
 }

@@ -80,30 +80,28 @@ enum TerminalLauncher {
             // instance. When it's NOT running, AppleScript would activate it
             // and Ghostty would auto-open its default window at the user's
             // home dir, then a second `new window` for our path — two
-            // windows. So in the cold-start case we use `open -na --args
-            // --working-directory=` instead, which makes Ghostty's first
-            // window land at our path with no extras. Note: `new tab`
-            // requires an explicit `in <window>` even though the sdef marks
-            // it optional.
-            let isRunning = !NSRunningApplication.runningApplications(withBundleIdentifier: terminal.bundleID).isEmpty
-            if isRunning {
-                source = """
-                tell application id "\(terminal.bundleID)"
-                    activate
-                    set cfg to new surface configuration
-                    set initial working directory of cfg to \(appleScriptString(path))
-                    if (count of windows) > 0 then
-                        new tab in front window with configuration cfg
-                    else
-                        new window with configuration cfg
-                    end if
-                end tell
-                """
-            } else {
-                source = """
-                do shell script "open -na Ghostty.app --args --working-directory=" & quoted form of \(appleScriptString(path))
-                """
-            }
+            // windows — but the `count of windows` check below already handles
+            // that by adding a tab to whatever window the launch opened.
+            //
+            // Do NOT reintroduce an NSRunningApplication branch here: in the
+            // sandboxed extension it can report Ghostty as not-running while
+            // it is, and the `open -na … --working-directory=` fallback it
+            // used to guard forces a *second* instance that restores its saved
+            // session and silently drops the working directory — the terminal
+            // then lands in an unrelated old tab. Note: `new tab` requires an
+            // explicit `in <window>` even though the sdef marks it optional.
+            source = """
+            tell application id "\(terminal.bundleID)"
+                activate
+                set cfg to new surface configuration
+                set initial working directory of cfg to \(appleScriptString(path))
+                if (count of windows) > 0 then
+                    new tab in front window with configuration cfg
+                else
+                    new window with configuration cfg
+                end if
+            end tell
+            """
         case .wezterm:
             source = """
             tell application id "\(terminal.bundleID)" to activate
