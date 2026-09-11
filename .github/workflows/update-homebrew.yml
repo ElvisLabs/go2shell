@@ -76,7 +76,7 @@ jobs:
             desc "Open terminal from Finder toolbar — fork with FinderSync extensions"
             homepage "https://github.com/${SOURCE_REPO}"
 
-            depends_on macos: ">= :sequoia"
+            depends_on macos: :sequoia
 
             app "go2shell.app"
 
