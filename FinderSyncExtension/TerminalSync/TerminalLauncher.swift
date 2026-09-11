@@ -50,7 +50,7 @@ enum TerminalLauncher {
             source = """
             tell application id "\(terminal.bundleID)"
                 activate
-                do script "cd \(singleQuoted(path))"
+                do script "cd " & quoted form of \(appleScriptString(path))
             end tell
             """
         case .iterm:
@@ -63,7 +63,7 @@ enum TerminalLauncher {
                     create window with default profile
                 end try
                 tell current session of current window
-                    write text "cd \(singleQuoted(path))"
+                    write text "cd " & quoted form of \(appleScriptString(path))
                 end tell
             end tell
             """
@@ -117,14 +117,12 @@ enum TerminalLauncher {
         }
     }
 
-    /// Shell-safe single-quoted wrapping. `'a b'` for spaces; `'\''` for
-    /// embedded single quotes.
-    private static func singleQuoted(_ s: String) -> String {
-        "'\(s.replacingOccurrences(of: "'", with: "'\\''"))'"
-    }
-
+    /// Percent-encoding for Warp's `path=` query value. `.urlPathAllowed`
+    /// keeps sub-delimiters like `&` and `+`, which would truncate the query
+    /// for a directory whose name contains one.
     private static func urlEncode(_ s: String) -> String {
-        s.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? s
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~/"))
+        return s.addingPercentEncoding(withAllowedCharacters: allowed) ?? s
     }
 
     /// AppleScript string literal, with backslash and double-quote escaped.

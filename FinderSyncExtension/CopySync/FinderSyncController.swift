@@ -48,10 +48,10 @@ final class FinderSyncController: FIFinderSync {
             urls = selected
         } else if let t = targeted, t.isFileURL, !t.path.isEmpty {
             urls = [t]
-        } else if let p = frontFinderPathViaAppleScript() {
-            urls = [URL(fileURLWithPath: p)]
         } else {
-            urls = []
+            // URL(fileURLWithPath:) also strips the trailing slash AppleScript
+            // puts on folder paths, so output matches the FinderSync branches.
+            urls = frontFinderPathsViaAppleScript().map { URL(fileURLWithPath: $0) }
         }
         let text = urls.map { $0.path }.joined(separator: "\n")
         logger.log("selected=\(selected.count, privacy: .public) targeted=\(targeted?.path ?? "nil", privacy: .public) text=\(text, privacy: .public)")
@@ -63,29 +63,46 @@ final class FinderSyncController: FIFinderSync {
         }
     }
 
-    /// Fallback for when the FinderSync API returns nil URLs (network
-    /// mounts, some Finder views). Requires the com.apple.finder apple-events
+    /// Fallback for when the FinderSync API returns nil URLs — network mounts,
+    /// iCloud Drive, some Finder views. Ask for the selection *first*: in those
+    /// locations `selectedItemURLs()` is empty too, so falling straight through
+    /// to the window target silently copies the parent folder of whatever the
+    /// user actually selected. Requires the com.apple.finder apple-events
     /// exception in the extension's entitlements.
-    private static func frontFinderPathViaAppleScript() -> String? {
+    private static func frontFinderPathsViaAppleScript() -> [String] {
         let source = """
         tell application "Finder"
             try
-                set theTarget to (target of front window) as alias
-                return POSIX path of theTarget
+                set sel to selection as alias list
+                if (count of sel) > 0 then
+                    set out to {}
+                    repeat with anItem in sel
+                        set end of out to POSIX path of anItem
+                    end repeat
+                    return out
+                end if
+                return {POSIX path of ((target of front window) as alias)}
             on error
-                return ""
+                return {}
             end try
         end tell
         """
-        guard let script = NSAppleScript(source: source) else { return nil }
+        guard let script = NSAppleScript(source: source) else { return [] }
         var error: NSDictionary?
         let descriptor = script.executeAndReturnError(&error)
         if let error = error {
             logger.error("Finder AppleScript failed: \(error, privacy: .public)")
-            return nil
+            return []
         }
-        let path = descriptor.stringValue ?? ""
-        return path.isEmpty ? nil : path
+        // An AppleScript list comes back as a descriptor list (1-based); a bare
+        // string has numberOfItems == 0.
+        if descriptor.numberOfItems > 0 {
+            return (1...descriptor.numberOfItems).compactMap {
+                descriptor.atIndex($0)?.stringValue
+            }.filter { !$0.isEmpty }
+        }
+        if let single = descriptor.stringValue, !single.isEmpty { return [single] }
+        return []
     }
 
     private func log(_ message: String) {

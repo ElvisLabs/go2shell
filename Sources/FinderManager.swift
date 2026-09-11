@@ -30,25 +30,27 @@ final class FinderManager: Sendable {
 
     /// Get full url to front Finder window or selected file
     func getFullUrlToFrontFinderWindowOrSelectedFile() -> URL? {
-        let finder = SBApplication(bundleIdentifier: "com.apple.finder")! as FinderApplication
-
-        guard let selection = finder.selection,
-              let selectionItems = selection.get() else {
+        guard let finder = SBApplication(bundleIdentifier: "com.apple.finder") as FinderApplication?,
+              let selection = finder.selection,
+              let selectionItems = selection.get() as? [AnyObject] else {
             return nil
         }
 
-        var target: FinderItem
+        let target: FinderItem
 
-        if let firstItem = (selectionItems as! Array<AnyObject>).first {
+        if let firstItem = selectionItems.first as? FinderItem {
             // Files or folders selected
-            target = firstItem as! FinderItem
+            target = firstItem
         } else {
-            // Check if there are finder windows opened
+            // Nothing selected: use the front window's target. `target` is nil
+            // for windows that aren't showing a folder (search results, Recents,
+            // Trash queries), so never force it — the caller falls back to Desktop.
             guard let windows = finder.FinderWindows?(),
-                  let firstWindow = windows.firstObject else {
+                  let firstWindow = windows.firstObject as? FinderFinderWindow,
+                  let windowTarget = firstWindow.target?.get() as? FinderItem else {
                 return nil
             }
-            target = (firstWindow as! FinderFinderWindow).target?.get() as! FinderItem
+            target = windowTarget
         }
 
         guard let targetUrl = target.URL,
@@ -60,8 +62,8 @@ final class FinderManager: Sendable {
     }
 
     func getDesktopPath() -> String? {
-        let homePath = NSHomeDirectory()
-        guard let homeUrl = URL(string: homePath) else { return nil }
-        return homeUrl.appendingPathComponent("Desktop").path
+        // URL(string:) returns nil for any home path that needs percent-encoding
+        // (a username containing a space); fileURLWithPath takes it literally.
+        URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Desktop").path
     }
 }
