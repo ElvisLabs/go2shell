@@ -19,6 +19,10 @@ on:
 jobs:
   update-homebrew:
     runs-on: ubuntu-latest
+    env:
+      # 跟随当前仓库，fork 后不需要再改（账号改名也会自动跟上）
+      TAP_REPO: ${{ github.repository_owner }}/homebrew-tap
+      SOURCE_REPO: ${{ github.repository }}
     steps:
       - name: Validate tag
         id: validate-tag
@@ -44,7 +48,7 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${{ steps.validate-tag.outputs.tag }}"
-          BASE_URL="https://github.com/${{ github.repository }}/releases/download/${VERSION}"
+          BASE_URL="https://github.com/${SOURCE_REPO}/releases/download/${VERSION}"
           curl -fsSL "${BASE_URL}/go2shell.zip.sha256" -o sha256
 
       - name: Update Homebrew Cask
@@ -67,10 +71,10 @@ jobs:
             version "${VERSION_NUM}"
             sha256 "${SHA256}"
 
-            url "https://github.com/solarhell/go2shell/releases/download/v#{version}/go2shell.zip"
+            url "https://github.com/${SOURCE_REPO}/releases/download/v#{version}/go2shell.zip"
             name "go2shell"
-            desc "Open terminal from Finder"
-            homepage "https://github.com/solarhell/go2shell"
+            desc "Open terminal from Finder toolbar — fork with FinderSync extensions"
+            homepage "https://github.com/${SOURCE_REPO}"
 
             depends_on macos: ">= :sequoia"
 
@@ -83,19 +87,28 @@ jobs:
                   xattr -d com.apple.quarantine /Applications/go2shell.app
 
                 Or go to System Settings > Privacy & Security > click "Open Anyway".
+
+                Then drag /Applications/go2shell.app into any Finder window's toolbar
+                while holding ⌘ (Command). You'll also need to enable the two FinderSync
+                extensions in System Settings > General > Login Items & Extensions.
               EOS
             end
+
+            zap trash: [
+              "~/Library/Preferences/com.solarhell.go2shell.plist",
+              "~/Library/Group Containers/group.com.solarhell.go2shell",
+            ]
           end
           CASK_EOF
 
           echo "Generated cask:"
           cat go2shell.rb
 
-          git clone https://git:${GH_TOKEN}@github.com/solarhell/homebrew-tap.git
-          mkdir -p homebrew-tap/Casks
-          cp go2shell.rb homebrew-tap/Casks/go2shell.rb
+          git clone "https://git:${GH_TOKEN}@github.com/${TAP_REPO}.git" tap
+          mkdir -p tap/Casks
+          cp go2shell.rb tap/Casks/go2shell.rb
 
-          cd homebrew-tap
+          cd tap
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Casks/go2shell.rb

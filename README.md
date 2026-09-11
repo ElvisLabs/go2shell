@@ -111,6 +111,7 @@ defaults write com.solarhell.go2shell PreferredTerminal WezTerm
 ## System Requirements
 
 - macOS Sequoia 15.0+
+- Apple Silicon or Intel — the release zip is a universal binary
 - Xcode 16+ (for building)
 
 ## Build

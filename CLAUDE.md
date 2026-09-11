@@ -7,15 +7,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 The build is driven by the **Makefile**, not SPM alone — `swift build` only produces the bare executable; the `.app` bundle, the two FinderSync extensions, and code signing are all assembled by the Makefile.
 
 ```bash
-make build           # SPM release build + both extensions + bundle assembly + signing → .build/go2shell.app
+make build           # Universal build (arm64 + x86_64) + both extensions + bundle + signing + arch check
+make verify          # lipo-check that all three binaries in the bundle carry every arch in ARCHS
 make install         # Build, copy to /Applications, lsregister + pluginkit register/enable, restart Finder
 make uninstall       # Remove from /Applications (does not clear App Group prefs)
-make run             # Run the built binary directly (shows settings UI — see routing below)
-make clean           # swift package clean + rm -rf .build .swiftpm
-make release         # Build + zip to build/go2shell.zip + print sha256 (local equivalent of CI packaging)
+make run             # Build, then run the binary with --show-ui (settings window)
+make clean           # swift package clean + rm -rf .build build .swiftpm
+make release         # Build + build/go2shell.zip + build/go2shell.zip.sha256 (exactly what CI ships)
+make icon-source     # swift generate_icon.swift → Resources/icon.png (HIG squircle)
 make icon            # Resources/icon.png → Resources/AppIcon.icns (sips + iconutil)
 make reset           # killall Finder
-make debug           # Print swift version + whether /Applications/go2shell.app exists
+make debug           # Print swift version, target arches, install state + installed arch
 ```
 
 `make install` hard-fails if `pluginkit -m -v` doesn't list both extension IDs afterwards. If they register but don't appear in Finder's "Customize Toolbar", check for a stale `disabled (unknown)` state in `pluginkit -m -v | grep go2shell`.
@@ -38,12 +40,19 @@ killall go2shellTerminal go2shellCopy      # NOT killall Finder
 
 Verified: the extension processes restart and log from the new binary on the next toolbar click while Finder keeps all its windows.
 
-Two Makefile targets are misleading:
+### Universal binary
 
-- `make run-settings` passes `--settings`, which **no code reads** — `main.swift` only checks `--show-ui`. It behaves identically to `make run`.
-- `make test` runs `swift test`, but `Package.swift` declares no test target. There are no tests in this repo.
+`make build` cross-compiles for **both** `arm64` and `x86_64`. `ARCHS` at the top of the Makefile is the only place that list lives.
 
-Icon regeneration is two steps, and only the second is in the Makefile: `swift generate_icon.swift` draws the HIG squircle into `Resources/icon.png`, then `make icon` resamples it into the `.icns`.
+- The main app goes through `swift build -c release --arch arm64 --arch x86_64`, which relocates the products to **`.build/apple/Products/Release/`** — *not* `.build/release`. `RELEASE_DIR` and the `*.bundle` glob in `create-bundle` both depend on that path, so dropping the `--arch` flags silently breaks bundle assembly.
+- The two extensions are compiled once per arch with `swiftc -target <arch>-apple-macosx15.0` into `.build/ext-arch/`, then merged with `lipo -create`. Codesign **after** the lipo — signing thin slices and merging afterwards invalidates the signature.
+- `make verify` runs at the end of every `make build` (and again in CI against the unzipped artifact) and fails if any of the three binaries is missing an arch. It exists because v1.1.0 shipped as an x86_64-only zip, hand-built on an Intel Mac, and nothing caught it before it reached the tap.
+
+### Target notes
+
+`make run` passes `--show-ui` explicitly — that is the only flag `main.swift` reads. The old `make run-settings` passed `--settings`, which no code has ever read; it and the `run-ui` alias are gone. `make test` just prints a note: `Package.swift` declares no test target and there are no tests in this repo.
+
+Icon regeneration is two steps, both in the Makefile: `make icon-source` runs `generate_icon.swift` to draw the HIG squircle into `Resources/icon.png`, then `make icon` resamples it into the `.icns`. Keep them separate — `icon-source` overwrites `icon.png`, so chaining it into `icon` would clobber a hand-supplied source image.
 
 ## Architecture
 
@@ -146,6 +155,6 @@ Releases are not notarized — the release notes tell users to run `xattr -d com
 
 `release.yml` (manual `workflow_dispatch`; auto-increments the patch version if none given) creates the tag and GitHub release, then calls `build.yml`, then `update-homebrew.yml`.
 
-`build.yml` runs `make build` and zips/checksums inline — it does **not** call `make release`. `make release` is the local equivalent; keep the two in sync if you change packaging.
+`build.yml` runs `make release` and uploads `build/go2shell.zip` + `build/go2shell.zip.sha256`, so local and CI packaging cannot drift — change packaging in the Makefile only. It then unzips the artifact and prints `lipo -archs` for all three binaries.
 
-Note the fork inconsistency: `update-homebrew.yml` still pushes the cask to **`solarhell/homebrew-tap`** with a download URL pointing at `solarhell/go2shell` releases, while this fork's origin is `dingtang2008/go2shell` and the READMEs tell users to install from `dingtang2008/tap`. Automated releases from this fork will not update the tap the README advertises.
+`update-homebrew.yml` derives both endpoints from the running workflow: the tap is `${{ github.repository_owner }}/homebrew-tap` and the download URL comes from `${{ github.repository }}`, so it follows forks and account renames without edits. (This repo's origin is still written as `dingtang2008/go2shell`; GitHub redirects that to `ElvisLabs/go2shell`, and likewise `dingtang2008/tap` → `ElvisLabs/homebrew-tap`, which is why the README's `brew install dingtang2008/tap/go2shell` still resolves.) The job overwrites `Casks/go2shell.rb` wholesale, so the `caveats` and `zap trash:` stanzas in the workflow heredoc are the source of truth — edit them there, never in the tap.

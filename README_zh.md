@@ -94,6 +94,7 @@ open /Applications/go2shell.app --args --show-ui
 ## 📋 系统要求
 
 - macOS Sequoia 15.0 或更高版本
+- Apple Silicon 与 Intel 均原生支持（发布包为通用二进制）
 - Xcode 16+ (用于构建)
 
 ## 🚀 快速开始
