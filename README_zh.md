@@ -49,15 +49,16 @@
 ### Homebrew（推荐）
 
 ```bash
-# Homebrew 6 默认拒绝加载第三方 tap 的 cask，需要先信任一次
-# 不做这步连 brew tap 都会失败
-brew trust --cask ElvisLabs/tap/go2shell
-
 brew install --cask ElvisLabs/tap/go2shell
 
 # 升级
 brew upgrade --cask ElvisLabs/tap/go2shell
 ```
+
+Homebrew 不会加载未信任的第三方 tap，但**把 cask 全名完整写在命令行里本身就算显式授权**：
+brew 会自动 tap、自动记录信任并完成安装，一条命令搞定。只有当你想单独执行
+`brew tap ElvisLabs/tap` 时才需要先 `brew trust ElvisLabs/tap`——单独 tap 没有指明任何
+cask，Homebrew 无从判断你的意图。
 
 应用是 ad-hoc 签名、未经 notarize，装好后清一次隔离属性：
 

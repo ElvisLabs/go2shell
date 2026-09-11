@@ -48,15 +48,17 @@ The app auto-detects the following terminals. Uninstalled ones are greyed out:
 ### Homebrew (recommended)
 
 ```bash
-# Homebrew 6 refuses to load casks from untrusted third-party taps,
-# so trust this one first — without it even `brew tap` fails.
-brew trust --cask ElvisLabs/tap/go2shell
-
 brew install --cask ElvisLabs/tap/go2shell
 
 # Upgrade
 brew upgrade --cask ElvisLabs/tap/go2shell
 ```
+
+Homebrew won't load casks from untrusted third-party taps, but naming the cask
+in full counts as explicit consent: brew taps the repo, records the trust and
+installs, all from that one command. Only if you want to `brew tap ElvisLabs/tap`
+on its own do you need `brew trust ElvisLabs/tap` first — a bare tap names no
+cask, so there is nothing for Homebrew to take as consent.
 
 The app is ad-hoc signed rather than notarized, so clear the quarantine flag once:
 
