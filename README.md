@@ -48,14 +48,25 @@ The app auto-detects the following terminals. Uninstalled ones are greyed out:
 ### Homebrew (recommended)
 
 ```bash
-# Install this fork
-brew install dingtang2008/tap/go2shell
+# Homebrew 6 refuses to load casks from untrusted third-party taps,
+# so trust this one first — without it even `brew tap` fails.
+brew trust --cask ElvisLabs/tap/go2shell
+
+brew install --cask ElvisLabs/tap/go2shell
 
 # Upgrade
-brew upgrade dingtang2008/tap/go2shell
+brew upgrade --cask ElvisLabs/tap/go2shell
 ```
 
-> Upstream builds are at `solarhell/tap/go2shell` if you prefer the original.
+The app is ad-hoc signed rather than notarized, so clear the quarantine flag once:
+
+```bash
+xattr -d com.apple.quarantine /Applications/go2shell.app
+```
+
+Or go to System Settings > Privacy & Security and click "Open Anyway".
+
+> Upstream builds are at `solarhell/tap/solarhell-go2shell` if you prefer the original.
 
 ### Build from source
 

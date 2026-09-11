@@ -48,6 +48,12 @@ Verified: the extension processes restart and log from the new binary on the nex
 - The two extensions are compiled once per arch with `swiftc -target <arch>-apple-macosx15.0` into `.build/ext-arch/`, then merged with `lipo -create`. Codesign **after** the lipo — signing thin slices and merging afterwards invalidates the signature.
 - `make verify` runs at the end of every `make build` (and again in CI against the unzipped artifact) and fails if any of the three binaries is missing an arch. It exists because v1.1.0 shipped as an x86_64-only zip, hand-built on an Intel Mac, and nothing caught it before it reached the tap.
 
+### Bundle version
+
+The checked-in `Info.plist` files keep a placeholder version — don't bump them by hand. `create-bundle` and both extension targets run `PlistBuddy` over the *copied* plist, writing `CFBundleShortVersionString` from the latest `v*` git tag (`APP_VERSION`) and `CFBundleVersion` from `git rev-list --count HEAD` (`APP_BUILD`). Outside a git checkout it falls back to whatever the source plist says.
+
+All three bundles must get the same version — a container app and an appex that disagree fail App Store validation and make `pluginkit -m -v` output confusing. Each write happens **before** that bundle's `codesign`; reordering them invalidates the signature.
+
 ### Target notes
 
 `make run` passes `--show-ui` explicitly — that is the only flag `main.swift` reads. The old `make run-settings` passed `--settings`, which no code has ever read; it and the `run-ui` alias are gone. `make test` just prints a note: `Package.swift` declares no test target and there are no tests in this repo.
@@ -156,5 +162,7 @@ Releases are not notarized — the release notes tell users to run `xattr -d com
 `release.yml` (manual `workflow_dispatch`; auto-increments the patch version if none given) creates the tag and GitHub release, then calls `build.yml`, then `update-homebrew.yml`.
 
 `build.yml` runs `make release` and uploads `build/go2shell.zip` + `build/go2shell.zip.sha256`, so local and CI packaging cannot drift — change packaging in the Makefile only. It then unzips the artifact and prints `lipo -archs` for all three binaries.
+
+Installing from the tap needs a trust step first: Homebrew 6 refuses to load casks from untrusted third-party taps, and without `brew trust --cask <tap>/go2shell` even `brew tap` fails with `invalid syntax in tap!`. Both READMEs document it; keep it there.
 
 `update-homebrew.yml` derives both endpoints from the running workflow: the tap is `${{ github.repository_owner }}/homebrew-tap` and the download URL comes from `${{ github.repository }}`, so it follows forks and account renames without edits. (This repo's origin is still written as `dingtang2008/go2shell`; GitHub redirects that to `ElvisLabs/go2shell`, and likewise `dingtang2008/tap` → `ElvisLabs/homebrew-tap`, which is why the README's `brew install dingtang2008/tap/go2shell` still resolves.) The job overwrites `Casks/go2shell.rb` wholesale, so the `caveats` and `zap trash:` stanzas in the workflow heredoc are the source of truth — edit them there, never in the tap.

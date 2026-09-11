@@ -49,14 +49,25 @@
 ### Homebrew（推荐）
 
 ```bash
-# 安装本 fork
-brew install dingtang2008/tap/go2shell
+# Homebrew 6 默认拒绝加载第三方 tap 的 cask，需要先信任一次
+# 不做这步连 brew tap 都会失败
+brew trust --cask ElvisLabs/tap/go2shell
+
+brew install --cask ElvisLabs/tap/go2shell
 
 # 升级
-brew upgrade dingtang2008/tap/go2shell
+brew upgrade --cask ElvisLabs/tap/go2shell
 ```
 
-> 如果想用上游版本，可以改用 `solarhell/tap/go2shell`。
+应用是 ad-hoc 签名、未经 notarize，装好后清一次隔离属性：
+
+```bash
+xattr -d com.apple.quarantine /Applications/go2shell.app
+```
+
+或前往 **系统设置 > 隐私与安全性**，点击"仍要打开"。
+
+> 如果想用上游版本，可以改用 `solarhell/tap/solarhell-go2shell`。
 
 ### 从源码构建
 

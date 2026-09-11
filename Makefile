@@ -15,6 +15,13 @@ APP_BUNDLE = $(BUILD_DIR)/$(APP_NAME).app
 INSTALL_PATH = /Applications/$(APP_NAME).app
 DIST_DIR = build
 
+# 版本号：以最近的 git tag 为准，脱离 git 构建时回落到 Info.plist 里的值。
+# 三个 bundle 必须写同一个版本，容器 app 和 appex 版本不一致会被系统拒绝加载。
+DETECTED_APP_VERSION = $(shell git describe --tags --match 'v[0-9]*' --abbrev=0 2>/dev/null | sed 's/^v//')
+PLIST_APP_VERSION = $(shell /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist 2>/dev/null || echo 0.0.0)
+APP_VERSION ?= $(if $(DETECTED_APP_VERSION),$(DETECTED_APP_VERSION),$(PLIST_APP_VERSION))
+APP_BUILD ?= $(shell git rev-list --count HEAD 2>/dev/null || echo 1)
+
 # 通用二进制：Apple Silicon + Intel，三个可执行文件都必须包含这两个架构
 ARCHS = arm64 x86_64
 SWIFT_ARCH_FLAGS = $(foreach arch,$(ARCHS),--arch $(arch))
@@ -38,6 +45,12 @@ TERM_SOURCES = $(EXT_DIR)/TerminalSync/FinderSyncController.swift \
 
 COPY_SOURCES = $(EXT_DIR)/CopySync/FinderSyncController.swift \
                $(EXT_DIR)/CopySync/main.swift
+
+# 把版本号写进已复制到 bundle 里的 Info.plist（源文件不动）
+define set-version
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $(APP_VERSION)" $(1) && \
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(APP_BUILD)" $(1)
+endef
 
 # 默认目标
 all: build
@@ -116,6 +129,7 @@ build-terminal-ext:
 	@lipo -create $(foreach arch,$(ARCHS),$(ARCH_TMP)/TerminalSync/go2shellTerminal-$(arch)) \
 	             -output $(TERM_EXT)/Contents/MacOS/go2shellTerminal
 	@cp $(EXT_DIR)/TerminalSync/Info.plist $(TERM_EXT)/Contents/Info.plist
+	@$(call set-version,$(TERM_EXT)/Contents/Info.plist)
 	@codesign --force --sign - \
 	        --entitlements $(EXT_DIR)/TerminalSync/FinderSync.entitlements \
 	        $(TERM_EXT)
@@ -134,6 +148,7 @@ build-copy-ext:
 	@lipo -create $(foreach arch,$(ARCHS),$(ARCH_TMP)/CopySync/go2shellCopy-$(arch)) \
 	             -output $(COPY_EXT)/Contents/MacOS/go2shellCopy
 	@cp $(EXT_DIR)/CopySync/Info.plist $(COPY_EXT)/Contents/Info.plist
+	@$(call set-version,$(COPY_EXT)/Contents/Info.plist)
 	@codesign --force --sign - \
 	        --entitlements $(EXT_DIR)/CopySync/FinderSync.entitlements \
 	        $(COPY_EXT)
@@ -161,6 +176,7 @@ create-bundle:
 
 	# 复制主应用配置
 	@cp Resources/Info.plist $(APP_BUNDLE)/Contents/
+	@$(call set-version,$(APP_BUNDLE)/Contents/Info.plist)
 
 	# 复制图标（如果存在）
 	@if [ -f Resources/AppIcon.icns ]; then \
@@ -322,6 +338,7 @@ debug:
 	@swift --version
 	@echo ""
 	@echo "目标架构: $(ARCHS)"
+	@echo "版本号: $(APP_VERSION) (build $(APP_BUILD))"
 	@echo ""
 	@echo "应用状态:"
 	@if [ -d "$(INSTALL_PATH)" ]; then \
